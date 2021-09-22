@@ -1,0 +1,344 @@
+---
+title: "Spatial Data Exercises"
+output:
+  xaringan::moon_reader:
+    seal: false
+    lib_dir: libs
+    css: ["xaringan-themer.css", "style.css"]
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+      ratio: 16:9
+      titleSlideClass: [left, bottom]
+---
+class: left, bottom, clear
+background-image: url("figs/WtAG Elephant.jpg")
+background-size: cover
+
+<br><br>
+.titlestyle[Reading, Visualizaing, and Manipulating]
+<br>
+.titlestyle[Spatial Data in R]
+
+<link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Lora" />
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(fig.align = "center", message = FALSE
+                      # , cache = TRUE # for fast builds
+                      )
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE, eval=FALSE}
+# remotes::install_github("gadenbuie/xaringanthemer")
+library(xaringanthemer)
+style_mono_accent(
+  base_color = "#213c47",
+  header_font_google = google_font("Josefin Sans"),
+  text_font_google   = google_font("PT Sans Narrow"),
+  code_font_google   = google_font("Source Code Pro"),
+  header_background_auto = TRUE,
+  header_h1_font_size = "2rem",
+  header_h2_font_size = "1.8rem",
+  header_h3_font_size = "1.6rem",
+  header_background_padding = "15px",
+  header_background_content_padding_top = "4.5rem",
+  outfile = "lecture/xaringan-themer.css"
+)
+```
+
+---
+# Reading, Visualizaing, and Manipulating Spatial Data in R
+
+We've gone over some of the aspects of spatial data in R. Now we are going to demonstrate how to *sf* and *tidyverse* libraries together to manipulate spatial **vector** data. 
+
+---
+# Step 1. Set up our environment and read in the data
+
+```{r}
+library(tidyverse)
+library(sf)
+library(mapview)
+```
+
+---
+
+# *sf* objects in R
+
+*sf* objects usually have two classes - *sf* and `data.frame`.
+Two main differences comparing to a regular `data.frame` object are 
+spatial metadata (`geometry type`, `dimension`, `bbox`, `epsg (SRID)`, 
+`proj4string`) and additional column - typically named `geom` or `geometry`.
+
+Today we are going to play with shapefiles of Hong Kong's administrative boundaries
+downloaded from the [global administrative areas database](http://www.gadm.org/download)
+and provided for you in the `data` directory. 
+
+---
+# Read in data
+
+Now let's use the `st_read` function to read both files in separately. Note that 
+within the *sf* library most commands begin with the "st" prefix. We can then do a quick plot of one of them
+
+```{r}
+boundary_path <- "data/HK_boundary.shp"
+district_path <- "data/HK_districts.shp"
+HK_boundary <- st_read(boundary_path)
+HK_districts <- st_read(district_path)
+plot(HK_boundary)
+```
+---
+
+# Attributes of *sf* objects
+
+Just for kicks, prove to yourself that a sf object is just a fancy data.frame:
+check out the class structure of *sf* objects
+
+```{r}
+class(HK_boundary)
+```
+
+Because of their dual class structure: *sf* objects can be used as a regular 
+`data.frame` object in many operations. For instance, we can call simple data.frame
+operations like `nrow` or `names` on these objects.
+
+```{r}
+nrow(HK_districts)
+ncol(HK_districts)
+names(HK_districts)
+```
+
+---
+
+# Dataframes & geometry?
+
+If we are ever curious about just the dataframe or just the geometry separately, 
+we can use `st_geometry` commands.  By setting the geometry to 'NULL' using `st_set_geometry`, an *sf* object returns to a simple *data.frame*. Calling the `st_geometry` from an *sf* object would extract just the spatial attributes turning this into a "simple feature collection" or *sfc*.   
+
+To turn an *sfc* object back into an *sf* object use `st_sf()`.
+
+```{r}
+#NOTE: None of these changes are permanent since they are not assigned ( <- ) to an object
+HK_boundary %>% class # complete sf object
+
+HK_boundary %>% st_set_geometry(NULL) %>% class  # force to data.frame
+
+HK_boundary %>% st_geometry() %>% class  # extract only the spatial info, force to "sfc"
+```
+
+---
+
+# Step 2: Visualize
+
+.pull-left[
+
+Let's take a look at our shapefiles, make sure they look like we expect. We can do this in 2 ways:
+1. Base R using `plot`
+2. *sf* by pulling geometry & plotting
+]
+
+.pull-right [
+Run the following code to see how these methods differ
+```
+# look what happens when we use generic plot on the whole dataframe
+HK_districts %>% plot
+
+# pull just the geometry
+HK_boundary %>% st_geometry() %>% plot
+HK_districts %>% st_geometry() %>% plot
+
+# or pull just one column
+plot(HK_districts["NAME_1"])
+```
+]
+
+---
+# Base R plot
+
+```{r, warning=FALSE}
+HK_districts %>% plot
+```
+---
+
+# Pull geometry only & plot
+.pull-left[
+
+```{r, warning=FALSE}
+HK_boundary %>% st_geometry() %>% plot
+```
+
+]
+
+.pull-right[
+
+```{r, warning=FALSE}
+HK_districts %>% st_geometry() %>% plot
+```
+]
+---
+
+# Pull just one column
+
+```{r}
+plot(HK_districts["NAME_1"])
+```
+---
+
+# Plotting With *ggplot*
+
+*ggplot2* now has integrated functionality to plot sf objects using `geom_sf()`.
+
+```{r}
+#simplest plot
+ggplot(HK_districts) + geom_sf()
+```
+
+This is useful to make sure your file looks correct but doesn't display any information about the data. 
+
+---
+
+# Plotting With *ggplot*
+
+We can plot these regions and fill each polygon based on the rgn_id.
+
+```{r}
+ggplot(HK_districts) + geom_sf(aes(fill = NAME_1))
+```
+
+---
+
+# Getting fancy with Mapview
+
+
+*ggplot* gives us useful defaults like Latitude and Longitude labels and cleaner legends but
+there are even fancier things we can do with maps. We'll introduce you to one in
+the *mapview* library below where we can get interactive maps.  *mapview* is a wrapper for the *leaflet* package. Leaflet is a visualization engine written in javascript that is widely used to make and embed interactive plots. 
+
+---
+
+# Getting fancy with Mapview
+
+```{r, screenshoot.force=TRUE}
+library(mapview)
+
+map <- mapview(HK_districts) #create a mapview object of the district boundaries
+points <- st_sample(HK_districts, 25) #sample out 25 of the district cities
+
+pointsRed <- mapview(points, cex=3, color="red") #create a mapview object of the cities. Color them red
+map+pointsRed #now plot the maps together
+
+```
+
+
+---
+
+# Step 3: Manipulate!
+
+An important advantage of simple features in R is that their structure makes it 
+easy to use the *dplyr* package on *sf* objects:
+
+For instance, taking standard examples we've introduced:
+
+`select()`
+
+```{r select}
+
+HK_trim <- HK_boundary %>%
+  select(ID_0, ISO, NAME_LO, SOVEREI, FIPS, ISON, POP2000, SQKM)
+
+HK_trim
+```
+---
+
+#Step 3: Manipulate!
+
+`mutate()` & `pull()`
+
+What is the population per square kilometer? 
+
+```{r mutate}
+HK_trim %>%
+  mutate(POP_per_SQKM = POP2000/SQKM) %>% pull(POP_per_SQKM)
+```
+
+
+---
+
+#Step 3: Manipulate!
+
+`filter()`
+
+Only plot a few districts
+```{r filter}
+
+HK_districts %>%
+  filter(NAME_1 %in% c("Eastern", "North", "Islands")) %>% 
+  ggplot(.) + geom_sf(aes(fill = NAME_1))
+```
+
+
+---
+
+# Spatial operations
+
+You can merge all polygons into one using `st_union()`.
+```{r st_union}
+
+full_rgn  <- st_union(HK_districts)
+
+plot(full_rgn)
+```
+
+---
+
+# Joins
+
+Perhaps we had some points -- locations of animal observations maybe -- and we 
+wanted to join them to data in a different layer like US states. *sf* and *dplyr* make this doable.
+
+Below we join the randomly sampled points from above to the HK_districts layer, to pull the relevant district information (like it's name) for each point. 
+
+```
+st_sf(points) %>% st_join(., HK_districts)
+```
+
+
+---
+
+# Summarizing
+
+From there it is simple to use `group_by` and `tally` (a wrapper for the more general `summarise` function) to count how many points we sampled in each district:
+
+```{r, warning=FALSE}
+st_sf(points) %>% 
+  st_join(., HK_districts) %>%
+  group_by(NAME_1) %>% 
+  tally()
+```
+
+---
+
+
+--- 
+
+# Homework
+.pull-left[
+Remember this map from above? Make this map pretty using the package *tmap* and add in the points we've selected out above. Refer back to the Spatial Data in R lecture and the New Zealand maps and change something about this map. Maybe make background blue? Maybe give it a title? Maybe you want a different color palette?
+
+```{r, warning=FALSE, echo=FALSE}
+ggplot(HK_districts) + geom_sf(aes(fill = NAME_1))
+```
+]
+
+.pull-right[
+Here is some code to get you started
+
+```
+library(tmap)
+tm_shape(HK_districts)+
+  tm_polygons(col = " ")+
+```
+]
+
+---
