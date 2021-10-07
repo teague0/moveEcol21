@@ -1,0 +1,246 @@
+---
+title: "Animal Tracking"
+author: "Teague O'Mara"
+date: "9/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Turkey Vultures!!
+
+Read in data from the Movebank Data Repository. Data are from Dodge et al 2014.
+
+```{r}
+
+turkeyVs <- read.csv("https://www.datarepository.movebank.org/bitstream/handle/10255/move.363/Turkey%20vultures%20in%20North%20and%20South%20America.csv?sequence=1")
+
+str(turkeyVs)
+unique(turkeyVs$individual.local.identifier)
+```
+
+We need to change the timestamp from a character to a real time.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+
+turkeyVs$timestamp <- ymd_hms(turkeyVs$timestamp)
+
+str(turkeyVs)
+
+```
+We won't want to work with all of the birds at once (yet). We'll select out Leo and see what he's been up.
+
+```{r}
+leo <- turkeyVs %>% filter(individual.local.identifier == "Leo")
+
+library(move)
+
+leo_m <- move(x = leo$location.long,
+              y = leo$location.lat,
+              time = leo$timestamp,
+              data = leo,
+              proj = CRS("+proj=longlat +ellps=WGS84"),
+              animal = "Leo")
+plot(leo_m)
+
+```
+
+We can plot either the move object or the data frame in ggplot to get an idea of where Leo went.
+
+```{r}
+ggplot(data = leo)+
+  geom_point(aes(x = location.long, y = location.lat))
+```
+
+
+This is nice to see our data are not complete garbage, and that leo went a long way, but it's not super informative about where exactly that bird was. 
+
+We'll pull in some other info to put him in a known world. We'll use the `rnaturalearth` package
+
+```{r}
+#install.packages("rnaturalearth", "rnaturalearthdata")
+#remotes::install_github("ropensci/rnaturalearthhires")
+
+```
+Once those are installed we can load them & extract some information
+
+
+```{r}
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rnaturalearthhires)
+library(sf)
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+state_prov_ca <- rnaturalearth::ne_states(c("united states of america", "canada", "mexico", "guatemala", "honduras", "nicaragua", "costa rica", "panama", "colombia", "venezuela"))
+state_prov_ca <- st_as_sf(state_prov_ca)
+head(state_prov_ca)
+
+```
+
+
+Now we have some bits of the world. Let's see where dat bird go to. Ggplot style
+
+```{r}
+ggplot()+
+  geom_sf(data = world)+
+  geom_sf(data = state_prov_ca, fill = NA)+
+  geom_path(data = leo,
+            aes(x = location.long,
+                y = location.lat,
+                color = year(timestamp)))+
+  scale_color_viridis_c()+
+  coord_sf(xlim = c(min(leo$location.long)-2, 
+                    max(leo$location.long)+2),
+           ylim = c(min(leo$location.lat)-0.5,
+                    max(leo$location.lat)+0.5))
+```
+
+Plot this in an interactive mapview
+
+```{r}
+library(mapview)
+mapview(leo_m)
+
+```
+
+Transrom into sf to get year in `mapview` plot
+```{r}
+
+leo_sf <- st_as_sf(leo, 
+                   coords = c("location.long", "location.lat"),
+                   crs = 4326)
+leo_sf$year <-  year(leo_sf$timestamp)
+#plot(leo_sf zcol = "year")
+
+#To plot as lines, transform to a linstring
+leo_line <- leo %>% 
+  st_as_sf(coords = c("location.long", "location.lat"),
+           crs = 4326) %>% 
+  group_by(year(timestamp)) %>% 
+  summarise(do_union = FALSE) %>% 
+  st_cast("LINESTRING")
+mapview(leo_line)
+
+```
+
+ Now, let's calculate a few things about Leo
+ 
+```{r}
+leo_m$speed <- c(move::speed(leo_m), NA)
+leo_m$turnAngle <- c(move::angle(leo_m), NA)
+leo_m$timeLag <- c(move::timeLag(leo_m, units="mins"), NA)
+leo_m$stepLength <- c(move::distance(leo_m), NA)
+
+ggplot(data = leo_m@data)+
+  geom_histogram(aes(x = timeLag))
+mean(leo_m$timeLag, na.rm=T)
+range(leo_m$timeLag, na.rm=T)
+```
+
+How does Leo's behavior change with latitude?
+
+```{r}
+ggplot(data = leo_m@data)+
+  geom_point(aes(x = location.lat, y = speed, color= month(timestamp)))+
+  scale_color_viridis_c()
+
+```
+
+
+## Assignment
+
+1. Find some movement from Movebank & either download / read directly into R
+2. Extract one animal
+3. Create a reasonable plot of that animal
+4. Calculate speed, turning angle, timelag between fixes, distance between fixes
+5. Create a plot in ggplot of speed (x) vs turning angle (y)
+6. Save as an html file & email to Teague by next class period.
+
+
+# Multiple animals together
+There is a small challenge to working with multiple animals at once. The way we meet this challenge is generally storing data in a list or list-like structure and then running functions over those structures using something like `lapply` (base R) or `purr` (tidyverse).
+
+For us right now, we'll use `move` to create a *Movestack*. This just just layering individual move objects one on top of the other. This functions as a list with @ showing slots and $ showing columns within a data frame. 
+
+```{r, message=FALSE, warning=FALSE}
+
+turkeyVs_m <- move(x = turkeyVs$location.long,
+                  y = turkeyVs$location.lat,
+                  time = turkeyVs$timestamp,
+                  data = turkeyVs,
+                  proj = CRS("+proj=longlat +ellps=WGS84"),
+                  animal = turkeyVs$individual.local.identifier)
+#str(turkeyVs_m)
+plot(turkeyVs_m)
+```
+
+You can access individual animals as elements in the list. Leo is the 8th bird in the list. If we wanted to just pull Leo out of the Movestack of all of the Turkey Vultures, we can get him this way:
+
+```{r, message=FALSE}
+
+leo.name <- turkeyVs_m[["Leo"]]
+leo.num <- turkeyVs_m[[8]]
+```
+
+<br>
+You can plot each of these separately and see that the two methods give you the same data.
+
+<br>
+
+Still, when we plot all of the birds together, we don't get to see where on the world these birds are. We can repeat the plotting methods from Leo to put them on a map.
+
+```{r, message=FALSE, warning=FALSE}
+ggplot()+
+  geom_sf(data = world)+
+  geom_sf(data = state_prov_ca)+
+  geom_path(data = turkeyVs,
+          aes(x = location.long,
+              y = location.lat,
+              color = individual.local.identifier))+
+  scale_color_viridis_d()+
+  coord_sf(xlim = c(min(turkeyVs$location.long)-2,
+                    max(turkeyVs$location.long)-2),
+           ylim = c(min(turkeyVs$location.lat)-0.5,
+                    max(turkeyVs$location.lat)+0.5), expand = TRUE)+
+  theme(legend.position = "none")
+
+```
+
+We can also calculate all of the movement parameters for each animal and visualize that using `ggplot`
+
+```{r, message=FALSE, warning=FALSE}
+turkeyVs_m$speed <- unlist(lapply(move::speed(turkeyVs_m), c, NA)) #calculated speed
+turkeyVs_m$birdID <-  turkeyVs_m@trackId #This add the individual identifier to the stored data frame to make it a bit easier to plot.
+
+turkeyVs_m@data %>% 
+  filter(!is.na(speed)) %>% 
+  ggplot()+
+  geom_histogram(aes(x = speed))+
+  facet_wrap(~birdID)+
+  theme_bw()
+
+```
+
+
+## Combining data types to get new information
+Often the answer to a question we have comes from joining two different spatial elements together. For example, if we want to know how much time Leo spends in each State / Province across his migration route we can summarize the number of GPS locations per polygon that we created for all of the Americas.
+
+```{r}
+library(kableExtra) #to format the table
+stateTally <- st_sf(leo_sf) %>% 
+  st_join(., state_prov_ca) %>% 
+  group_by(name) %>% 
+  tally() %>% 
+  kable(format = "html", escape = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+stateTally
+
+```
+
