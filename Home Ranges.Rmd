@@ -1,0 +1,222 @@
+---
+title: "Home Range Methods"
+author: "Teague O'Mara"
+date: "10/7/2021"
+html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Find some data & transform it
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ctmm)
+data("buffalo")
+cilla_c <- buffalo$Cilla
+cilla_df <- as(cilla_c, "data.frame")
+plot(cilla_c)
+class(cilla_c)
+
+library(move)
+cilla_m <- move(x = cilla_df$x,
+                y = cilla_df$y,
+                time = cilla_c$timestamp,
+                proj = CRS(cilla_c@info$projection),
+                data = cilla_df,
+                sensor = "GPS",
+                animal = "Cilla")
+
+library(adehabitatHR)
+cilla_spdf <- as(cilla_m, "SpatialPointsDataFrame")
+cilla_spdf2 <- cilla_df
+coordinates(cilla_spdf2) <- ~x+y
+proj4string(cilla_spdf2) <- CRS(cilla_c@info$projection)
+
+library(sf)
+cilla_sf <- st_as_sf(cilla_df,
+                     coords = c("x", "y"),
+                     crs = CRS(cilla_c@info$projection))
+```
+
+
+## Minimum Convex Polygon
+The simplest form of a homerange is drawing a polygon around a bunch of points. 
+
+If you are curious about a simple estimate of a home range, the `move` package includes a function to do this.
+
+```{r, message=FALSE, warning=FALSE}
+hrBootstrap(x = cilla_m, rep = 25, unin = "km", unout = "km2")
+
+```
+This give us an estimate of size, but no map or location
+
+
+```{r, message=FALSE, warning=FALSE}
+mcp <- mcp(cilla_spdf2, percent = 95)
+
+ggplot()+
+  geom_sf(data = st_as_sf(mcp))+
+  geom_sf(data = st_as_sf(cilla_spdf2))
+
+```
+
+If you want to compare the area of MCPs across percentages, you can calculate mcp.area
+
+```{r, message=FALSE, warning=FALSE}
+
+mcp.area(cilla_spdf2, percent = seq(20, 100, by = 5),
+         unin = c("m", "km"),
+         unout = c("ha", "km2", "m2"), plotit = TRUE)
+```
+
+
+
+##Kernel Density Estimation
+
+```{r, message=FALSE, warning=FALSE}
+kud <- kernelUD(cilla_spdf2)
+image(kud)+title("Cilla the buffalo's KUD")
+```
+
+
+We can take the area of this
+
+```{r, message=FALSE, warning=FALSE}
+jj <- kernel.area(kud)
+plot(jj, xaxt = "n", xlab = "Kernel UD", ylab = "Area (ha)")
+axis(1, at=1:16, labels = seq(20, 95, by = 5))
+```
+We often want to plot the contours of the UD along with the locations.
+
+```{r, message=FALSE, warning=FALSE}
+
+ver95 <- getverticeshr(kud, percent = 95)
+ver50 <- getverticeshr(kud, percent = 50)
+
+sp::plot(ver95)+
+  points(cilla_spdf2)+
+  sp::plot(ver50, add = TRUE, col = "green", alpha = 0.6)
+  
+```
+
+## Autocorrelated Gaussian reference function Kernel Density Estimates (aKDE)
+
+The previous home range estimates are pretty straight forward & the methods to get numbers out are canned. The aKDE however needs a little bit of extra attention to make sure that the correct model is chosen to get adequate representation of the autocorrelation structure in the data. 
+
+As we read, autocorrelation can make you really underestimate the true home range of the animals you are studying. One method around this is the aKDE that separates out the movement trajectory from the home range calculation in a way that gives stable and robust estimates of true home ranges (it seems).
+
+We’ll calculate these in ctmm. Fitting an aKDE is a little more involved, but is worth the effort to get better estimates. If you type in browseVignettes(package = "ctmm") in your console, you’ll see a few different tutorials that help you with this process. We’ll go through some of it now, and start with the move object since the ctmm authors suggest taking your data directly from Movebank and importing with with as.telemetry(). Our object cilla is already a telemetry object (the kind required by ctmm), so we’ll look at that and move on.
+
+To estimate our aKDE we need to do a few things
+1. We have to estimate the autocorrelation in the data
+2. We have to see what kind of reference model we need
+3. We then have to apply this to calculate areas. 
+
+
+## 1. Variograms
+Variograms are an unbiased way to visualize autocorrelation structure when migration, range shifting, drift, or other translations of the mean location aren't happen. 
+
+A variogram can give use an indication of how long it takes for our data to start reflecting true home range. This will be based on the range crossing time of the animal.
+
+```{r, message=FALSE, warning=FALSE}
+SVF <- variogram(cilla_c)
+str(SVF)
+level <- c(0.5, 0.95)
+xlim <- c(0, 12 %#% "hour") # 0-12 hour window
+
+par(mfrow = c(1, 2)) #this sets the plot window to have 1 row, 2 columns
+plot(SVF, xlim = xlim, level = level)
+title("zoomed in")
+plot(SVF, level = level)
+title("zoomed out")
+
+```
+
+Depending on the type & quality of data, fitting a variogram can be tricky. Need to read through & follow the `ctmmm` documentation. There are many caveats to fitting a variogram and a few different methods to do so based on the distibution of the data (IID (independent, identical distribution), OUF Ornstein-Uhlenbeck foraging movement). It’s important to have a good variogram estimated for the data since this will be used later in calculating the range. Check out the variogram vignette when you type in browseVignettes(package = "ctmm"). We’re just going to jump to fitting a variogram the easy way. This will let us adjust the parameters to get an optimal fit to the data and then save those into an object called GUESS
+
+If we want to just fit a variogram and be done with it, we can do it in the following way:
+
+```{r, message=FALSE, warning=FALSE}
+variogram.fit(SVF) #interactively fit variogram
+
+plot(SVF, CTMM = GUESS, level = level, col.CTMM = "purple", xlim = xlim)
+
+```
+
+How well did that work?
+If you have a complex, hypothetical model in mind (like an OUF) as you would get from the variogram fitting the easy way, then you can perfrom model lsection more easily with `ctmm.select`. This considers the initial guess and the iterates this model to select the best one.
+
+```{r, message=FALSE, warning=FALSE}
+FITZ <- ctmm.select(cilla_c, GUESS, verbose = TRUE, cores = 2)
+summary(FITZ)
+```
+
+The isotropic and anisotropic (isotropic=FALSE) flags correspond to circular and elliptical covariances respectively—an option we did not consider above. The OUf model is a special case of the OUF model where the two autocorrelation timescales, τ position and τ velocity, cannot be distinguished. This model is usually only relevant for short tracks of data. The IID model was never considered here by ctmm.select because it first requires selecting OU over OUF in the nested model hierarchy. See help("ctmm") for more options.
+
+The OUF anisotropic model is the best fit to Cilla's data.
+
+Now it's time to make sure that our selected model is explaining the most significant features of the animal's movement. Let's plot the variogram again with the fit model
+
+```{r, message=FALSE, warning=FALSE}
+par(mfrow = c(1,2))
+plot(SVF, CTMM=FITZ, col.CTMM = c("red", "purple", "blue", "green"),
+     fraction = 0.65, level = 0.5)
+title("zoomed out")
+plot(SVF, CTMM = FITZ, col.CTMM = c("red", "purple", "blue", "green"), xlim = xlim, level = 0.5)
+
+```
+
+Notice that the blue OU model is significantly biased downward and is underestimating the diffusion. This is because the continuous-velecoty behavior at short itme lags, which the OU model doesn't account for, is throwing off the estimate. The green OUf model where timelags are all identical underestimates diffusion altogether. 
+
+While the red OUF model is the selected one, it looks slightly biased upwards in comparison to the variogram fit. Some of this is due to sampling variability, which could be partially removed in the variogram method by increasing the resolution argument. Differences here could be attributed to lack of accounting for telemetry error. 
+
+## Fit an akDE
+
+Now that we have estimated a variogram and a model for our buffalo we can fit a homerange for her. *Note* the `ctmm.fit` functions can take a lot of time.
+
+```{r, message=FALSE, warning=FALSE}
+M.IID <- ctmm.fit(cilla_c) #no autocorrelation. Just a KDE
+m.ouf <- ctmm.guess(cilla_c, interactive = FALSE)
+M.OUF <- ctmm.fit(cilla_c, m.ouf)
+```
+
+M.IID is the inappropriate IID model which will result in an conventional KDE. The OUF is the better, continuous velocity model. Note that you want the best model for each individual, so these should be fit per animal. Different movement behaviors and sampling schedule will reveal different autocorrelation structures in the data. 
+
+We can calculate the UD's from the models above accounting for autocorrelation (or not), and with / without optimal weight of the data.
+```{r, message=FALSE, warning=FALSE}
+UD0 <- akde(cilla_c, M.IID)
+UD2 <- akde(cilla_c, M.OUF)
+UD2w <- akde(cilla_c, M.OUF, weights = TRUE)
+```
+
+
+Plot those data
+
+```{r, message=FALSE, warning=FALSE}
+EXT <- extent(list(UD0, UD2, UD2w))
+
+par(mfrow = c(2, 2))
+plot(cilla_c, UD = UD0, xlim = EXT$x, ylim = EXT$y)
+title(expression("IID KDE"["C"]))
+plot(cilla_c, UD = UD2, xlim = EXT$x, ylim = EXT$y)
+title(expression("OUF KDE"["C"]))
+plot(cilla_c, UD = UD2w, xlim = EXT$x, ylim = EXT$y)
+title(expression("OUF weighted KDE"["C"]))
+
+```
+<br>
+By default both the density function and its 95% contours are plotted along with the location data. The middle contour represent the maximum likelihood area where the animal spends 95% of its time. This percentage can be changed with the level.UD option (see `help(plot.telemetry)`). The inner and outer contours correspond to confidence intervals on the magnitude of the area, which can be adjusted with the level option.
+
+The optimal bandwidth determines the “resolution” of the kernel density estimate. By default we plot grid lines with dimensions matching the standard deviations of the individual kernels. This gives a rough guideline as to what spatial details are and are not important in the density estimate. One can see that the IID KDEC estimate fits tightly to the data and reports many significant details in the buffalo’s home range. The autocorrelated estimates predict future space use more accurately, based on the diffusion model, and yield a more honest account of their uncertainties.
+
+Finally we can compare area estimates and effective sample size, DOF = degrees of freedom.
+
+```{r, message=FALSE, warning=FALSE}
+summary(UD0, units = TRUE)
+summary(UD2, units = TRUE)
+summary(UD2w, units = TRUE)
+  ```

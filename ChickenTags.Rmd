@@ -1,0 +1,194 @@
+---
+title: "Chickens!"
+author: "Teague O'Mara"
+date: "11/11/2021"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Bring in some chicken GPS data
+
+```{r}
+library(move)
+library(tidyverse)
+
+cluck <- move("./data/Chickens Gallus gallus domesticus Hammond_GPS.csv")
+cluck$birdID <- cluck@trackId
+unique(cluck$birdID)
+
+```
+
+We have the locations from our 5 birds. We could generate our usual movement metrics from them (speed, turning angle, etc). 
+
+
+```{r}
+cluck$speed <- unlist(lapply(speed(cluck), c, NA))
+cluck$angle <- unlist(lapply(angle(cluck), c, NA))
+
+ggplot(cluck@data)+
+  geom_density(aes(x = speed, fill = birdID), alpha = 0.5)+
+  scale_fill_viridis_d()+
+  xlim(0, 2.5)+
+  xlab(expression(paste("speed m", s^-1)))
+```
+
+
+
+
+But Beachy wants to know if his chickens have differential social relationships. To do this, we'll create a chicken social network to see who the outcasts are.
+
+```{r}
+library(spatsoc)
+library(asnipe)
+library(data.table)
+library(igraph)
+
+#First we need to turn our move object into a data table.
+cluck_dt <- as.data.table(cluck)
+
+#Group our timstamps into 1 minute bins
+group_times(cluck_dt, datetime = "timestamp", threshold = "1 minute")
+
+#Generate our spatial network 
+group_pts(cluck_dt, 
+          threshold = 5, 
+          id = "birdID", 
+          coords = c("utm.easting", "utm.northing"), 
+          timegroup = "timegroup")
+
+gbi <- get_gbi(cluck_dt, group = "group", id = "birdID")
+
+net <- get_network(gbi, data_format = "GBI", association_index = "SRI")
+
+## Plot the spatial graph
+g <- graph.adjacency(net, 'undirected',
+                     diag = FALSE, weighted = TRUE)
+plot(g)
+
+```
+
+Gardinea's GPS tag stopped working early, so it wouldn't be surprising if she falls outside of the main network. We can also see if there are any communities in our network. A community is just a group of individuals that asssociate more than others. We can also extract out metrics like network strength & centrality.
+
+```{r}
+observedNetworkStats <- data.table(
+  centrality = evcent(g)$vector,
+  strength = graph.strength(g),
+  degree = degree(g),
+  ID = names(degree(g))
+)
+
+coms <- cluster_fast_greedy(g)
+plot(g, mark.groups = coms)
+
+```
+
+Let's look at some acceleration data.
+
+```{r}
+##ACC data
+options(digits.secs=4)
+library(lubridate)
+
+acc <- read.csv("./data/Chickens Gallus gallus domesticus Hammond_ACC.csv")
+acc$timestamp <- as.POSIXct(acc$timestamp, format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+
+#Need to convert the bursts to rows
+acc_L <- split(acc, f = acc$event.id)
+accLong <- lapply(acc_L, function(g){
+  accAxesL <- lapply(str_split(as.character(g$accelerations.raw),' '), as.numeric) #get just the acc
+  accAxesL_v <- unlist(accAxesL) #turn the acc values into a numeric vector
+  g$TotalNumberSamples_rec <- as.numeric(length(accAxesL_v)) #how many samples are there?
+  sampfreq <- g$acceleration.sampling.frequency.per.axis
+  
+  #Now take every 3rd observation for each axis
+  x <- accAxesL_v[seq(1,g$TotalNumberSamples_rec,3)]
+  y <- accAxesL_v[seq(2,g$TotalNumberSamples_rec,3)]
+  z <- accAxesL_v[seq(3,g$TotalNumberSamples_rec,3)]
+  timestamp <-  rep(g$timestamp, length(x))
+  for(i in 1:(length(timestamp)-1)){
+    j = i+1
+    timestamp[j] = timestamp[i]+1/sampfreq
+  }
+  
+  tmp_df <- bind_cols(g$event.id,
+                      g$individual.local.identifier,
+                      g$tag.local.identifier,
+                      g$acceleration.sampling.frequency.per.axis,
+                      g$TotalNumberSamples_rec,
+                      timestamp,
+                      x,
+                      y,
+                      z)
+  names(tmp_df) <- c("event.id", "individual.local.identifier", "tag.local.identifier", "acceleration.sampling.frequency.per.axis", "TotalNumberSamples_rec", "timestamp", "x", "y", "z")
+  return(tmp_df)
+}) 
+
+acc_df <- do.call("rbind", accLong)
+
+#Create places for new variables
+acc_df$odba <- NA
+acc_df$staticX <- NA
+acc_df$staticY <- NA
+acc_df$staticZ <- NA
+acc_df$pitch <- NA
+
+acc_df_L <- split(acc_df, f = acc_df$individual.local.identifier)
+
+#Define window length
+sampfreq <- 16
+nSecs <- 5
+interval <- sampfreq*nSecs
+
+library(zoo)
+odbaL <- lapply(acc_df_L, function(temp){
+  print("Calculating static accelerations and pitch")
+   # Calculate mean acceleration over a moving window
+  temp$staticX <- rollmean(temp$x, interval, fill = NA)
+  temp$staticY <- rollmean(temp$y, interval, fill = NA)
+  temp$staticZ <- rollmean(temp$z, interval, fill = NA)
+  
+  # Calculate pitch based on mean acceleration in each axis
+  temp$pitch <- atan(temp$staticX/(sqrt((temp$staticY^2)+(temp$staticZ^2))))*(180/pi)
+  
+  # Calculate dynamic acceleration
+  print("Calculating dynamic accleration")
+  temp$dynamicX <- temp$x - temp$staticX
+  temp$dynamicY <- temp$y - temp$staticY
+  temp$dynamicZ <- temp$z - temp$staticZ
+  temp$ODBA <- abs(temp$dynamicX) + abs(temp$dynamicY) + abs(temp$dynamicZ)
+  return(temp)
+})
+
+odba_df <- do.call("rbind", odbaL)
+
+```
+
+
+Now we have measures of odbs & pitch for our birds.
+
+
+```{r}
+ggplot(odba_df)+
+  geom_histogram(aes(x = ODBA, fill = individual.local.identifier))+
+  facet_wrap(~individual.local.identifier)+
+  ylim(0, 2500)
+
+```
+Pitch
+
+```{r}
+ggplot(odba_df)+
+  geom_histogram(aes(x = pitch, fill = individual.local.identifier))+
+  facet_wrap(~individual.local.identifier)+
+  ylim(0, 2500)
+
+```
+
+

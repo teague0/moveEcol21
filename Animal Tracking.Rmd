@@ -2,7 +2,8 @@
 title: "Animal Tracking"
 author: "Teague O'Mara"
 date: "9/30/2021"
-output: html_document
+html_document:
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE}
