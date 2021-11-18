@@ -159,7 +159,11 @@ siteDiversity <- siteDiversity %>%
 
 library(sf)
 
+<<<<<<< HEAD
 usa <- st_as_sf(maps::map("state", fill=TRUE, plot =FALSE))
+=======
+usa <- st_as_sf(maps::map("usa", fill=TRUE, plot =FALSE))
+>>>>>>> 8d7f78fad8b318a174334ee51eafcabc8c287e44
 
 gulf <- st_as_sf(maps::map("state", region= c("Alabama", "Mississippi", "Louisiana"), fill=TRUE, plot =FALSE))
 
