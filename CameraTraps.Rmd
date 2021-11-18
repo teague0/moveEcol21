@@ -221,10 +221,11 @@ alldat %>% filter(Diversity == "Species richness") %>%
 
 ###Assignment
 
-1. There are multiple hypothesis that link higher species diversity to lower latitudes -- there are more species closer to the tropics. Is this true in the US? Please make a plot of each for species richness and diversity (y-axis) versus latitude (x-axis) for all of the Snapshot USA sites.
+1. There are multiple hypothesis that link higher species diversity to lower latitudes -- there are more species closer to the tropics. Is this true in the US? Please make 2 plots: one for species richness and one for diversity (y-axis) versus latitude (x-axis) for all of the Snapshot USA sites.
 
 
-2. Everything likes to eat rabbits. I want to test the hypothesis that total species diversity (measured through the Shannon Index) is positively related to bunny detection rates. Create a plot of total rabbit & hare detection rates (x-axis) vs Shannon Diversity Index (y-axis). You should sum up the Black-tailed Jackrabbit, Desert Cottontail, Eastern Cottontail, Marsh Rabbit Pygmy Rabbit, Swamp rabbit , Snowshoe Hare, Unknown Cottontail, Unknown Rabbit_Hare, and White-tailed Jackrabbit.
+2. Everything likes to eat rabbits. I want to test the hypothesis that total species diversity (measured through the Shannon Index) is positively related to bunny detection rates. Create a plot of total rabbit & hare detection rates (x-axis) vs Shannon Diversity Index (y-axis). To create your bunny rate, you should sum up the Black-tailed Jackrabbit, Desert Cottontail, Eastern Cottontail, Marsh Rabbit Pygmy Rabbit, Swamp rabbit , Snowshoe Hare, Unknown Cottontail, Unknown Rabbit_Hare, and White-tailed Jackrabbit.
+
 
 3. Create a map of the lower 48 Snapshot USA sites. Color them by Shannon Diversity Index and scale their size by the sum of their overall detection rate for all species combined.
 
